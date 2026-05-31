@@ -6,3 +6,155 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
+
+model avatar {
+  id        String  @id @db.Char(26)
+  image_url String? @db.Text
+  name      String? @db.VarChar(100)
+  user      user[]
+}
+
+/// This model has been renamed to 'Renamedclass' during introspection, because the original name 'class' is reserved.
+model classroom {
+  id               String             @id @default(ulid()) @db.Char(26)
+  class_name       String?            @db.VarChar(100)
+  description      String?            @db.Text
+  class_code       String?            @db.VarChar(20)
+  teacher_id       String?            @db.Char(26)
+  created_at       DateTime?          @default(now()) @db.DateTime(0)
+  updated_at       DateTime?          @default(now()) @db.DateTime(0)
+  user             user?              @relation(fields: [teacher_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "class_ibfk_1")
+  class_member     class_member[]
+  gesture_practice gesture_practice[]
+  material         material[]
+  quiz             quiz[]
+
+  @@index([teacher_id], map: "teacher_id")
+  @@map("class")
+}
+
+model class_member {
+  id           String        @id @default(ulid()) @db.Char(26)
+  class_id     String?       @db.Char(26)
+  student_id   String?       @db.Char(26)
+  joined_at    DateTime?     @default(now()) @db.DateTime(0)
+  Renamedclass classroom? @relation(fields: [class_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "class_member_ibfk_1")
+  user         user?         @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "class_member_ibfk_2")
+
+  @@unique([class_id, student_id], map: "class_id")
+  @@index([student_id], map: "student_id")
+}
+
+model gesture_practice {
+  id             String           @id @default(ulid()) @db.Char(26)
+  class_id       String?          @db.Char(26)
+  title          String?          @db.VarChar(150)
+  target_gesture String?          @db.VarChar(100)
+  description    String?          @db.Text
+  Renamedclass   classroom?    @relation(fields: [class_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "gesture_practice_ibfk_1")
+  gesture_result gesture_result[]
+
+  @@index([class_id], map: "class_id")
+}
+
+model gesture_result {
+  id               String            @id @default(ulid()) @db.Char(26)
+  practice_id      String?           @db.Char(26)
+  student_id       String?           @db.Char(26)
+  accuracy_score   Float?            @db.Float
+  result_data      String?           @db.LongText
+  created_at       DateTime?         @default(now()) @db.DateTime(0)
+  gesture_practice gesture_practice? @relation(fields: [practice_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "gesture_result_ibfk_1")
+  user             user?             @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "gesture_result_ibfk_2")
+
+  @@index([practice_id], map: "practice_id")
+  @@index([student_id], map: "student_id")
+}
+
+model material {
+  id           String         @id @default(ulid()) @db.Char(26)
+  class_id     String?        @db.Char(26)
+  title        String?        @db.VarChar(150)
+  type         material_type?
+  content      String?        @db.Text
+  created_at   DateTime?      @default(now()) @db.DateTime(0)
+  updated_at   DateTime?      @default(now()) @db.DateTime(0)
+  Renamedclass classroom?     @relation(fields: [class_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "material_ibfk_1")
+  quiz         quiz[]
+
+  @@index([class_id], map: "class_id")
+}
+
+model quiz {
+  id            String          @id @default(ulid()) @db.Char(26)
+  class_id      String?         @db.Char(26)
+  material_id   String?         @db.Char(26)
+  title         String?         @db.VarChar(150)
+  created_at    DateTime?       @default(now()) @db.DateTime(0)
+  updated_at    DateTime?       @default(now()) @db.DateTime(0)
+  Renamedclass  classroom?      @relation(fields: [class_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "quiz_ibfk_1")
+  material      material?       @relation(fields: [material_id], references: [id], onUpdate: Restrict, map: "quiz_ibfk_2")
+  quiz_question quiz_question[]
+  quiz_result   quiz_result[]
+
+  @@index([class_id], map: "class_id")
+  @@index([material_id], map: "material_id")
+}
+
+model quiz_question {
+  id             String  @id @default(ulid()) @db.Char(26)
+  quiz_id        String? @db.Char(26)
+  question       String? @db.Text
+  option_a       String? @db.Text
+  option_b       String? @db.Text
+  option_c       String? @db.Text
+  option_d       String? @db.Text
+  correct_answer String? @db.Text
+  quiz           quiz?   @relation(fields: [quiz_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "quiz_question_ibfk_1")
+
+  @@index([quiz_id], map: "quiz_id")
+}
+
+model quiz_result {
+  id         String    @id @default(ulid()) @db.Char(26)
+  quiz_id    String?   @db.Char(26)
+  student_id String?   @db.Char(26)
+  score      Float?    @db.Float
+  created_at DateTime? @default(now()) @db.DateTime(0)
+  quiz       quiz?     @relation(fields: [quiz_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "quiz_result_ibfk_1")
+  user       user?     @relation(fields: [student_id], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "quiz_result_ibfk_2")
+
+  @@index([quiz_id], map: "quiz_id")
+  @@index([student_id], map: "student_id")
+}
+
+model user {
+  id             String           @id @default(ulid()) @db.Char(26)
+  name           String?          @db.VarChar(100)
+  email          String?          @unique(map: "email") @db.VarChar(100)
+  password       String?          @db.VarChar(255)
+  role           user_role?
+  avatar_id      String?          @db.Char(26)
+  refresh_token  String?          @db.Text
+  created_at     DateTime?        @default(now()) @db.DateTime(0)
+  updated_at     DateTime?        @default(now()) @db.DateTime(0)
+  Renamedclass   classroom[]
+  class_member   class_member[]
+  gesture_result gesture_result[]
+  quiz_result    quiz_result[]
+  avatar         avatar?          @relation(fields: [avatar_id], references: [id], onUpdate: Restrict, map: "user_ibfk_1")
+
+  @@index([avatar_id], map: "avatar_id")
+  @@unique([refresh_token(length: 191)], map: "refresh_token")
+}
+
+enum material_type {
+  text
+  video
+  file
+}
+
+enum user_role {
+  guru
+  siswa
+}
