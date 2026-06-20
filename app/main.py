@@ -319,6 +319,177 @@ def search_root(payload: SearchRequest):
     search_query = payload.query or payload.phrase or ""
     return perform_search(search_query)
 
+# ==================== SPOK SENTENCE VALIDATION SERVICE ====================
+
+class SpokValidationRequest(BaseModel):
+    sentence: Optional[str] = None
+    words: Optional[list[str]] = None
+
+def get_word_role(word: str) -> tuple[Optional[str], Optional[str], float]:
+    word_clean = word.lower().strip()
+    if not word_clean:
+        return None, None, 0.0
+        
+    # Check common Indonesian prepositions
+    prepositions = {"di", "ke", "dari", "pada", "oleh", "dengan", "untuk", "dalam"}
+    if word_clean in prepositions:
+        return "PREP", word_clean, 1.0
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT word, unsur_spok FROM kamus_bisindo")
+    rows = cursor.fetchall()
+    conn.close()
+
+    best_match = None
+    best_role = None
+    best_score = 0.0
+
+    for row in rows:
+        word_db = row["word"].lower().strip()
+        score = jaro_winkler_similarity(word_clean, word_db)
+        if score > best_score:
+            best_score = score
+            best_match = row["word"]
+            best_role = row["unsur_spok"]
+
+    threshold = 0.85 if len(word_clean) <= 4 else 0.70
+    if best_score >= threshold:
+        return best_role, best_match, best_score
+    else:
+        return None, None, best_score
+
+def perform_spok_validation(payload: SpokValidationRequest):
+    input_words = []
+    if payload.words:
+        input_words = [w.strip() for w in payload.words if w.strip()]
+    elif payload.sentence:
+        import re
+        cleaned = re.sub(r'[^\w\s-]', '', payload.sentence)
+        input_words = [w.strip() for w in cleaned.split() if w.strip()]
+        
+    if not input_words:
+        return {
+            "valid": False,
+            "pattern": "",
+            "breakdown": [],
+            "feedback": "⚠️ Masukan kalimat atau daftar kata kosong. Silakan tulis kalimat untuk diperiksa."
+        }
+
+    # Pre-parse words and match database entries
+    temp_breakdown = []
+    for w in input_words:
+        role, matched, score = get_word_role(w)
+        temp_breakdown.append({
+            "word": w,
+            "matched_word": matched or w,
+            "db_role": role,
+            "score": score
+        })
+
+    # Group prepositions + location nouns as K (Keterangan)
+    final_breakdown = []
+    roles = []
+    idx = 0
+    n = len(temp_breakdown)
+    while idx < n:
+        item = temp_breakdown[idx]
+        word = item["word"]
+        db_role = item["db_role"]
+        
+        if db_role == "PREP" and idx + 1 < n:
+            next_item = temp_breakdown[idx + 1]
+            grouped_word = f"{word} {next_item['word']}"
+            final_breakdown.append({
+                "word": grouped_word,
+                "role": "Keterangan",
+                "symbol": "K",
+                "confidence": (item["score"] + next_item["score"]) / 2.0
+            })
+            roles.append("K")
+            idx += 2
+        else:
+            role_name = "Lainnya"
+            symbol = "L"
+            if db_role == "S" or db_role == "O":
+                if "P" in roles:
+                    role_name = "Objek"
+                    symbol = "O"
+                else:
+                    role_name = "Subjek"
+                    symbol = "S"
+            elif db_role == "P":
+                role_name = "Predikat"
+                symbol = "P"
+            elif db_role == "K":
+                role_name = "Keterangan"
+                symbol = "K"
+                
+            final_breakdown.append({
+                "word": word,
+                "role": role_name,
+                "symbol": symbol,
+                "confidence": item["score"]
+            })
+            roles.append(symbol)
+            idx += 1
+
+    pattern = "-".join(roles)
+    
+    # Valid Indonesian sentence patterns
+    valid_patterns = {"S-P", "S-P-O", "S-P-K", "S-P-O-K", "K-S-P", "K-S-P-O", "K-S-P-O-K"}
+    is_valid = pattern in valid_patterns
+    
+    feedback = ""
+    if is_valid:
+        pattern_names = {
+            "S-P": "Subjek (S) - Predikat (P)",
+            "S-P-O": "Subjek (S) - Predikat (P) - Objek (O)",
+            "S-P-K": "Subjek (S) - Predikat (P) - Keterangan (K)",
+            "S-P-O-K": "Subjek (S) - Predikat (P) - Objek (O) - Keterangan (K)",
+            "K-S-P": "Keterangan (K) - Subjek (S) - Predikat (P)",
+            "K-S-P-O": "Keterangan (K) - Subjek (S) - Predikat (P) - Objek (O)",
+            "K-S-P-O-K": "Keterangan (K) - Subjek (S) - Predikat (P) - Objek (O) - Keterangan (K)"
+        }
+        feedback = f"🎉 Luar Biasa! Susunan kalimat Anda sangat tepat dan memenuhi struktur baku {pattern_names[pattern]}."
+    else:
+        has_s = "S" in roles
+        has_p = "P" in roles
+        
+        if not has_s and not has_p:
+            feedback = "⚠️ Kalimat tidak terstruktur. Struktur kalimat bahasa Indonesia minimal harus memiliki Subjek (S) dan Predikat (P) seperti 'Saya (S) belajar (P)'."
+        elif not has_s:
+            feedback = "⚠️ Kalimat Anda kehilangan Subjek (S). Tambahkan pelaku atau aktor di awal kalimat (misal: 'Saya', 'Guru', 'Ayah') untuk menunjukkan siapa yang melakukan tindakan."
+        elif not has_p:
+            feedback = "⚠️ Kalimat Anda kehilangan Predikat (P). Struktur bahasa Indonesia wajib memiliki kata kerja atau tindakan (misal: 'makan', 'belajar', 'minum') setelah Subjek."
+        elif "O" in roles and "P" in roles and roles.index("O") < roles.index("P"):
+            feedback = "⚠️ Susunan kurang tepat. Dalam tata bahasa Indonesia baku, Objek (O) harus diletakkan setelah tindakan/Predikat (P), bukan sebelumnya."
+        elif len(roles) == 2 and roles == ["S", "O"]:
+            feedback = "⚠️ Pola terdeteksi S-O (Subjek - Objek). Anda kekurangan Predikat (P) di antara Subjek dan Objek. Contoh yang benar: 'Saya (S) membaca (P) buku (O)'."
+        else:
+            feedback = f"⚠️ Pola kalimat '{pattern}' tidak memenuhi struktur tata bahasa Indonesia baku (SPOK). Cobalah menyusun kalimat dengan urutan yang benar seperti 'Saya (S) makan (P) roti (O)'."
+
+    return {
+        "valid": is_valid,
+        "pattern": pattern,
+        "breakdown": final_breakdown,
+        "feedback": feedback
+    }
+
+@app.post("/api/v1/spok/validate")
+def validate_spok_v1(payload: SpokValidationRequest):
+    return perform_spok_validation(payload)
+
+@app.post("/api/spok/validate")
+def validate_spok_api(payload: SpokValidationRequest):
+    return perform_spok_validation(payload)
+
+@app.post("/spok/validate")
+def validate_spok_root(payload: SpokValidationRequest):
+    return perform_spok_validation(payload)
+
+
 # ==================== REAL-TIME WEBSOCKET AI INFERENCE SERVICE ====================
 
 # Initialize MediaPipe Hands detector using the modern Tasks API
