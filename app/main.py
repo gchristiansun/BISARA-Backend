@@ -145,6 +145,7 @@ MOCK_SEEDS = [
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON;")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS kamus_bisindo (
         key TEXT PRIMARY KEY,
@@ -155,6 +156,28 @@ def init_db():
         description TEXT,
         last_updated INTEGER NOT NULL,
         unsur_spok TEXT CHECK (unsur_spok IN ('S', 'P', 'O', 'K', 'L'))
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS assigned_quizzes (
+        id TEXT PRIMARY KEY,
+        class_code TEXT NOT NULL,
+        word TEXT NOT NULL,
+        target_accuracy INTEGER NOT NULL,
+        difficulty TEXT NOT NULL,
+        assigned_date TEXT NOT NULL,
+        status TEXT CHECK (status IN ('Aktif', 'Ditutup'))
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS quiz_submissions (
+        id TEXT PRIMARY KEY,
+        student_code TEXT NOT NULL,
+        quiz_id TEXT NOT NULL,
+        best_accuracy INTEGER NOT NULL,
+        stars INTEGER NOT NULL,
+        completed_date TEXT NOT NULL,
+        FOREIGN KEY (quiz_id) REFERENCES assigned_quizzes(id) ON DELETE CASCADE
     );
     """)
     conn.commit()
@@ -178,6 +201,18 @@ def init_db():
                 now,
                 seed["unsur_spok"]
             ))
+        conn.commit()
+
+    # Seed mock quizzes if empty
+    cursor.execute("SELECT COUNT(*) FROM assigned_quizzes")
+    q_count = cursor.fetchone()[0]
+    if q_count == 0:
+        cursor.execute("INSERT INTO assigned_quizzes VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("q1", "INK3A", "Terima Kasih", 85, "Adaptif AI", "2 jam yang lalu", "Aktif"))
+        cursor.execute("INSERT INTO assigned_quizzes VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("q2", "INK3A", "Makan", 75, "Adaptif AI", "1 hari yang lalu", "Aktif"))
+        cursor.execute("INSERT INTO assigned_quizzes VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       ("q3", "INK3A", "Belajar", 90, "Adaptif AI", "3 hari yang lalu", "Ditutup"))
         conn.commit()
     conn.close()
 
@@ -488,6 +523,161 @@ def validate_spok_api(payload: SpokValidationRequest):
 @app.post("/spok/validate")
 def validate_spok_root(payload: SpokValidationRequest):
     return perform_spok_validation(payload)
+
+
+# ==================== ASSIGNMENTS & SUBMISSIONS SERVICES ====================
+
+class AssignmentCreate(BaseModel):
+    class_code: str
+    word: str
+    target_accuracy: int
+    difficulty: Optional[str] = "Adaptif AI"
+
+class AssignmentStatusUpdate(BaseModel):
+    status: str
+
+class SubmissionCreate(BaseModel):
+    student_code: str
+    quiz_id: str
+    best_accuracy: int
+    stars: int
+
+@app.get("/api/assignments")
+def get_assignments(class_code: Optional[str] = None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    if class_code:
+        cursor.execute("SELECT * FROM assigned_quizzes WHERE class_code = ? ORDER BY id DESC", (class_code,))
+    else:
+        cursor.execute("SELECT * FROM assigned_quizzes ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = []
+    for r in rows:
+        result.append({
+            "id": r["id"],
+            "classCode": r["class_code"],
+            "word": r["word"],
+            "targetAccuracy": r["target_accuracy"],
+            "difficulty": r["difficulty"],
+            "assignedDate": r["assigned_date"],
+            "status": r["status"]
+        })
+    return result
+
+@app.post("/api/assignments")
+def create_assignment(payload: AssignmentCreate):
+    import uuid
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    assignment_id = "q" + str(uuid.uuid4())[:8]
+    assigned_date = "Hari Ini"
+    
+    cursor.execute("""
+    INSERT INTO assigned_quizzes (id, class_code, word, target_accuracy, difficulty, assigned_date, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'Aktif')
+    """, (assignment_id, payload.class_code, payload.word, payload.target_accuracy, payload.difficulty, assigned_date))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "id": assignment_id,
+        "classCode": payload.class_code,
+        "word": payload.word,
+        "targetAccuracy": payload.target_accuracy,
+        "difficulty": payload.difficulty,
+        "assignedDate": assigned_date,
+        "status": "Aktif"
+    }
+
+@app.patch("/api/assignments/{quiz_id}/status")
+def update_assignment_status(quiz_id: str, payload: AssignmentStatusUpdate):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+    UPDATE assigned_quizzes SET status = ? WHERE id = ?
+    """, (payload.status, quiz_id))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "quiz_id": quiz_id, "new_status": payload.status}
+
+@app.delete("/api/assignments/{quiz_id}")
+def delete_assignment(quiz_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON;")
+    cursor.execute("""
+    DELETE FROM assigned_quizzes WHERE id = ?
+    """, (quiz_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "quiz_id": quiz_id}
+
+@app.post("/api/submissions")
+def create_submission(payload: SubmissionCreate):
+    import uuid
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    submission_id = "s" + str(uuid.uuid4())[:8]
+    completed_date = "Baru Saja"
+    
+    cursor.execute("""
+    INSERT INTO quiz_submissions (id, student_code, quiz_id, best_accuracy, stars, completed_date)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (submission_id, payload.student_code, payload.quiz_id, payload.best_accuracy, payload.stars, completed_date))
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "id": submission_id,
+        "studentCode": payload.student_code,
+        "quizId": payload.quiz_id,
+        "bestAccuracy": payload.best_accuracy,
+        "stars": payload.stars,
+        "completedDate": completed_date
+    }
+
+@app.get("/api/submissions")
+def get_submissions(class_code: Optional[str] = None):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    if class_code:
+        cursor.execute("""
+        SELECT qs.*, aq.word FROM quiz_submissions qs
+        JOIN assigned_quizzes aq ON qs.quiz_id = aq.id
+        WHERE aq.class_code = ?
+        ORDER BY qs.completed_date DESC
+        """, (class_code,))
+    else:
+        cursor.execute("""
+        SELECT qs.*, aq.word FROM quiz_submissions qs
+        JOIN assigned_quizzes aq ON qs.quiz_id = aq.id
+        ORDER BY qs.completed_date DESC
+        """)
+        
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = []
+    for r in rows:
+        result.append({
+            "id": r["id"],
+            "studentCode": r["student_code"],
+            "quizId": r["quiz_id"],
+            "word": r["word"],
+            "bestAccuracy": r["best_accuracy"],
+            "stars": r["stars"],
+            "completedDate": r["completed_date"]
+        })
+    return result
 
 
 # ==================== REAL-TIME WEBSOCKET AI INFERENCE SERVICE ====================
