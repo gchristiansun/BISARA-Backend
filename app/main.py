@@ -356,9 +356,107 @@ def search_root(payload: SearchRequest):
 
 # ==================== SPOK SENTENCE VALIDATION SERVICE ====================
 
+# Check if Gemini API key is available
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+HAS_GEMINI = False
+if GEMINI_KEY:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_KEY)
+        HAS_GEMINI = True
+        print("Gemini LLM validation capability initialized successfully!")
+    except Exception as e:
+        print("Gemini SDK configuration failed:", e)
+
 class SpokValidationRequest(BaseModel):
     sentence: Optional[str] = None
     words: Optional[list[str]] = None
+
+def guess_indonesian_word_role(word: str) -> str:
+    """
+    Indonesian morphological heuristics to guess SPOK word roles.
+    Returns: 'S' (Subject/Noun), 'P' (Predicate/Verb), 'O' (Object/Noun), 'K' (Adverb/Preposition), or 'L' (Other)
+    """
+    word = word.lower().strip()
+    
+    # 1. Prepositions and Adverbs (Keterangan)
+    prepositions = {
+        "di", "ke", "dari", "pada", "oleh", "dengan", "untuk", "dalam", "bagi", "sejak", 
+        "sampai", "seperti", "bagaikan", "demi", "tentang", "sebab", "karena", "sebelum", "setelah",
+        "pagi", "siang", "sore", "malam", "kemarin", "besok", "lusa", "sekarang", "dulu", "nanti",
+        "hari", "minggu", "bulan", "tahun", "jam", "waktu", "saat", "ketika", "tempat", "sana", "sini", "situ",
+        "dan", "atau", "tetapi", "namun", "jika", "kalau", "agar", "supaya"
+    }
+    if word in prepositions:
+        return "K"
+        
+    if word.startswith("se-") and any(word.endswith(x) for x in ["-nya", "hari", "kali", "puluh", "ratus", "ribu"]):
+        return "K"
+        
+    # 2. Verbs (Predikat)
+    is_verb = False
+    if word.startswith("me") and len(word) > 4:
+        is_verb = True
+    elif word.startswith("ber") and len(word) > 4:
+        is_verb = True
+    elif word.startswith("di") and len(word) > 3 and word not in ("di", "dia"):
+        is_verb = True
+    elif word.startswith("ter") and len(word) > 4:
+        is_verb = True
+        
+    if is_verb:
+        return "P"
+        
+    # 3. Nouns / Pronouns (Subjek / Objek)
+    pronouns = {
+        "saya", "aku", "kamu", "dia", "mereka", "kita", "kami", "anda", "beliau", "ia", 
+        "kiko", "adik", "kakak", "ayah", "ibu", "guru", "siswa", "kucing", "anjing", "burung", "ikan", 
+        "buku", "roti", "kopi", "bola", "lapangan", "sekolah", "rumah", "kantor", "sepeda", "mobil"
+    }
+    if word in pronouns:
+        return "S"
+        
+    if word.startswith("pe") and len(word) > 4:
+        return "S"
+    if word.endswith("an") and len(word) > 4:
+        return "S"
+    if word.endswith("nya") and len(word) > 4:
+        return "S"
+        
+    return "L"
+
+def validate_spok_with_llm(sentence: str):
+    try:
+        import google.generativeai as genai
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Analisis struktur tata bahasa Indonesia (SPOK) dari kalimat berikut: "{sentence}".
+        Berikan jawaban dalam format JSON murni tanpa markdown (jangan gunakan ```json).
+        JSON harus memiliki kunci:
+        - "valid": boolean (true jika kalimat memenuhi pola tata bahasa baku Indonesia seperti S-P, S-P-O, S-P-K, S-P-O-K, K-S-P, K-S-P-O, K-S-P-O-K, dll.)
+        - "pattern": string (misalnya "S-P-O" atau "S-P-K")
+        - "breakdown": list of objects, masing-masing memiliki:
+            - "word": kata/frasa
+            - "role": nama peran ("Subjek", "Predikat", "Objek", "Keterangan", "Lainnya")
+            - "symbol": simbol peran ("S", "P", "O", "K", "L")
+        - "feedback": string (penjelasan ramah dalam Bahasa Indonesia. Jika benar, beri pujian. Jika salah, jelaskan letak kesalahannya secara mendetail dan beri saran perbaikan).
+        """
+        response = model.generate_content(prompt)
+        import json
+        text = response.text.strip()
+        # Clean markdown formatting if present
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        data = json.loads(text)
+        return data
+    except Exception as e:
+        print("Gemini validation error, falling back to rule-based:", e)
+        return None
 
 def get_word_role(word: str) -> tuple[Optional[str], Optional[str], float]:
     word_clean = word.lower().strip()
@@ -393,9 +491,21 @@ def get_word_role(word: str) -> tuple[Optional[str], Optional[str], float]:
     if best_score >= threshold:
         return best_role, best_match, best_score
     else:
-        return None, None, best_score
+        # Fallback to Morphological Indonesian Heuristic Guessing
+        guessed_role = guess_indonesian_word_role(word_clean)
+        return guessed_role, word_clean, 0.80
 
 def perform_spok_validation(payload: SpokValidationRequest):
+    input_sentence = payload.sentence
+    if not input_sentence and payload.words:
+        input_sentence = " ".join(payload.words)
+        
+    # Try LLM validation first if key is present and sentence is provided
+    if HAS_GEMINI and input_sentence:
+        llm_result = validate_spok_with_llm(input_sentence)
+        if llm_result:
+            return llm_result
+
     input_words = []
     if payload.words:
         input_words = [w.strip() for w in payload.words if w.strip()]
@@ -523,6 +633,7 @@ def validate_spok_api(payload: SpokValidationRequest):
 @app.post("/spok/validate")
 def validate_spok_root(payload: SpokValidationRequest):
     return perform_spok_validation(payload)
+
 
 
 # ==================== ASSIGNMENTS & SUBMISSIONS SERVICES ====================
