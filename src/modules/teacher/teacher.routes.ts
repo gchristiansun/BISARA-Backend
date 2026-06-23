@@ -25,10 +25,29 @@ teacherRouter.post(
     teacherController.logoutTeacherHandler
 )
 
-// Route untuk Logout
+// Route untuk Refresh Token
 teacherRouter.post(
     "/refresh-token",
     teacherController.refresfAccessTokenHandler
+)
+
+// Get Teacher By Id
+teacherRouter.get(
+    "/:id",
+    teacherController.getTeacherById
+)
+
+// Update Teacher
+teacherRouter.put(
+    "/:id",
+    validateRequest(teacherValidation.updateTeacherSchema),
+    teacherController.updateTeacher
+)
+
+// Delete Teacher
+teacherRouter.delete(
+    "/:id",
+    teacherController.deleteTeacher
 )
 
 export default teacherRouter;

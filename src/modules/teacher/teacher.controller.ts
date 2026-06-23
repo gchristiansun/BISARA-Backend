@@ -7,11 +7,14 @@ import {
     verifyRefreshToken
 } from "../../utils/jwt";
 import {
-    RegisterTeacherInput,
-    LoginTeacherInput
+    UpdateTeacherInput
 } from "./teacher.validation"
 import { UserPayload } from "../../middleware/auth.middleware"
 import { comparePassword } from "../../utils/password";
+
+type teacherParams = {
+    id: string
+}
 
 // Handle Register Teacher
 export const registerTeacherHandler = async (
@@ -76,7 +79,7 @@ export const loginTeacherHandler = async (
         // Simpan Refresh Token ke Database
         await teacherService.saveRefreshTokenTeacher(teacher.id, refreshToken)
 
-        // Simpan Refresh Token Sebagai HttpOnly Cookie
+        // Simpan Refresh Token Sebagai httpOnly Cookie
         res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -98,7 +101,7 @@ export const loginTeacherHandler = async (
     }
 }
 
-// Refresh Toke
+// Refresh Token
 export const refresfAccessTokenHandler = async (
     req: Request, 
     res: Response,
@@ -112,7 +115,7 @@ export const refresfAccessTokenHandler = async (
 
         const payload = verifyRefreshToken(tokenFromCookie) as UserPayload;
         if (!payload) {
-            throw new HttpError(403, 'Invalid r expired refresh token');
+            throw new HttpError(403, 'Invalid or expired refresh token');
         }
 
         const teacher = await teacherService.findTeacherByToken(tokenFromCookie);
@@ -156,6 +159,56 @@ export const logoutTeacherHandler = async (
         return res.status(200).json({
             message: "Logged out successfully"
         })
+    } catch (error) {
+        next(error)
+    }
+}
+
+// Get Teacher By Id
+export const getTeacherById = async (
+    req: Request<teacherParams>,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { id } = req.params;
+        const teacher = await teacherService.getTeacherById(id);
+
+        if (!teacher) {
+            throw new HttpError(404, 'teacher not found')
+        }
+
+        res.json(teacher)
+    } catch (error) {
+        next(error)
+    }
+}
+
+// Update Teacher
+export const updateTeacher = async (
+    req: Request<teacherParams>,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { id } = req.params;
+        const updated = await teacherService.updateTeacher(id, req.body);
+        res.json(updated)
+    } catch (error) {
+        next(error)
+    }
+}
+
+// Delete Teacher
+export const deleteTeacher = async (
+    req: Request<teacherParams>,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const { id } = req.params;
+        await teacherService.deleteTeacher(id);
+        res.status(204).send()
     } catch (error) {
         next(error)
     }

@@ -3,8 +3,8 @@ import jwt, { SignOptions } from "jsonwebtoken";
 // Helper var.env
 const getEnvVariable = (
     key:
-        | 'ACCESSS_TOKEN_SECRET'
-        | 'ACCESSS_TOKEN_EXPIRES_IN'
+        | 'ACCESS_TOKEN_SECRET'
+        | 'ACCESS_TOKEN_EXPIRES_IN'
         | 'REFRESH_TOKEN_SECRET'
         | 'REFRESH_TOKEN_EXPIRES_IN'
 ) : string => {
@@ -17,8 +17,8 @@ const getEnvVariable = (
 
 // Generate acces token
 export const signAccessToken = (payload: string | object | Buffer) : string => {
-    const secret = getEnvVariable('ACCESSS_TOKEN_SECRET');
-    const expiresIn = getEnvVariable('ACCESSS_TOKEN_EXPIRES_IN')
+    const secret = getEnvVariable('ACCESS_TOKEN_SECRET');
+    const expiresIn = getEnvVariable('ACCESS_TOKEN_EXPIRES_IN')
 
     const options: SignOptions = { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] };
     return jwt.sign(payload, secret, options);
@@ -38,7 +38,7 @@ export const verifyAccessToken = (
     token: string
 ) : string | jwt.JwtPayload | null => {
     try {
-        const secret = getEnvVariable('ACCESSS_TOKEN_SECRET');
+        const secret = getEnvVariable('ACCESS_TOKEN_SECRET');
         return jwt.verify(token, secret);
     } catch (error) {
         return null;

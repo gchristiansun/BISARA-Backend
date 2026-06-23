@@ -1,8 +1,11 @@
 import prisma from "../../config/prisma";
 import { hashPassword } from "../../utils/password";
-import { RegisterTeacherInput } from "./teacher.validation";
+import { 
+    RegisterTeacherInput,
+    UpdateTeacherInput
+} from "./teacher.validation";
 
-// Cek Email
+// Temukan Teacher By Email
 export const findTeacheByEmail = async (email:string) => {
     return await prisma.teacher.findUnique({
         where: {email: email}
@@ -50,5 +53,27 @@ export const findTeacherByToken = async (refreshToken: string) => {
         where: {
             refresh_token: refreshToken,
         }
+    })
+}
+
+// Get Teacher By Id
+export const getTeacherById = async (id: string) => {
+    return await prisma.teacher.findUnique({
+        where: { id }
+    })
+}
+
+// Update Teacher
+export const updateTeacher = async (id: string, data:UpdateTeacherInput) => {
+    return await prisma.teacher.update({
+        where: { id },
+        data
+    })
+}
+
+// Delete Teacher
+export const deleteTeacher  =async (id: string) => {
+    return await prisma.teacher.delete({
+        where: { id }
     })
 }

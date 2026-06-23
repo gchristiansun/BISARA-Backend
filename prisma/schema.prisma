@@ -133,6 +133,8 @@ model teacher {
   id             String           @id @default(ulid()) @db.Char(26)
   name           String?          @db.VarChar(100)
   email          String?          @unique(map: "email") @db.VarChar(100)
+  nip            String?          @db.VarChar(100)
+  instansi       String?          @db.VarChar(100)
   password       String?          @db.VarChar(255)
   avatar_id      String?          @db.Char(26)
   refresh_token  String?          @db.Text
